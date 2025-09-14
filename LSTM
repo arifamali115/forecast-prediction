@@ -1,0 +1,132 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from google.colab import files
+uploaded = files.upload()  # This opens a file picker in the browser
+
+# Load the dataset
+file_path = "IoWT10minavg.csv"
+df = pd.read_csv(file_path)
+
+df.info(), df.head()
+
+#  Imports
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+from tqdm import tqdm
+
+#  Load your dataset (make sure your file is already uploaded)
+df = pd.read_csv("IoWT10minavg.csv")
+df.columns = df.columns.str.strip()
+
+#  Features to predict
+features = ['ntu','orp','ph','tds','temp']
+
+#  Store results
+results = {}
+
+#  Loop through each feature
+for feature in features:
+    print(f"\n Processing: {feature.upper()}")
+
+    #  1. Normalize the data
+    data = df[[feature]].dropna()
+    scaler = StandardScaler()
+    data_scaled = scaler.fit_transform(data)
+
+    #  2. Create sequences
+    def create_sequences(data, seq_len):
+        X, y = [], []
+        for i in range(len(data) - seq_len):
+            X.append(data[i:i + seq_len])
+            y.append(data[i + seq_len])
+        return np.array(X), np.array(y)
+
+    sequence_length = 30
+    X_all, y_all = create_sequences(data_scaled, sequence_length)
+
+    #  3. Train-test split
+    train_size = int(len(X_all) * 0.7)
+    X_train, X_test = X_all[:train_size], X_all[train_size:]
+    y_train, y_test = y_all[:train_size], y_all[train_size:]
+
+    #  4. Build and train LSTM model
+    model = Sequential([
+        LSTM(64, return_sequences=True, input_shape=(sequence_length, 1)),
+        LSTM(32),
+        Dense(1)
+    ])
+    model.compile(optimizer='adam', loss='mse')
+    model.fit(X_train, y_train, epochs=50, batch_size=32, validation_split=0.1, verbose=1)
+
+    #  5. Predict & evaluate
+    y_pred_scaled = model.predict(X_test)
+    y_pred = scaler.inverse_transform(y_pred_scaled)
+    y_actual = scaler.inverse_transform(y_test)
+
+    mse = mean_squared_error(y_actual, y_pred)
+    rmse = np.sqrt(mse)
+    mae = mean_absolute_error(y_actual, y_pred)
+    mape = np.mean(np.abs((y_actual - y_pred) / y_actual)) * 100
+    r2 = r2_score(y_actual, y_pred)
+
+    results[feature] = {
+        "MSE": round(mse, 4),
+        "RMSE": round(rmse, 4),
+        "MAE": round(mae, 4),
+        "MAPE (%)": round(mape, 2),
+        "R²": round(r2, 4)
+    }
+
+    # 📈 Plot actual vs predicted
+    plt.figure(figsize=(14, 5))
+    plt.plot(y_actual, label='Actual', color='blue')
+    plt.plot(y_pred, label='Predicted', color='orange')
+    plt.title(f"Actual vs Predicted {feature.upper()} (Test Set)")
+    plt.xlabel("Time Steps")
+    plt.ylabel(feature.upper())
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+    #  6. Forecast next 12960 samples (90 days)
+    future_steps = 12960
+    last_sequence = data_scaled[-sequence_length:]
+    current_input = last_sequence.reshape(1, sequence_length, 1)
+    future_predictions_scaled = []
+
+    for _ in tqdm(range(future_steps), desc=f" Forecasting {feature.upper()} (Next 90 Days)"):
+        next_pred_scaled = model.predict(current_input, verbose=0)[0, 0]
+        future_predictions_scaled.append([next_pred_scaled])
+        next_input = np.append(current_input[0, 1:], [[next_pred_scaled]], axis=0)
+        current_input = next_input.reshape(1, sequence_length, 1)
+
+    future_predictions = scaler.inverse_transform(future_predictions_scaled)
+
+    #  Plot forecast
+    plt.figure(figsize=(16, 6))
+    plt.plot(np.arange(len(y_pred)), y_pred, label="Predicted (Test)", color='blue')
+    future_index = np.arange(len(y_pred), len(y_pred) + future_steps)
+    plt.plot(future_index, future_predictions, label="Forecast (Next 90 Days)", color='red', linestyle='--')
+    plt.title(f"{feature.upper()} Forecast - Next 90 Days (12960 samples)")
+    plt.xlabel("Time Step (10-min intervals)")
+    plt.ylabel(feature.upper())
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+#  Print performance results
+print("\n LSTM Evaluation Results:")
+pd.DataFrame(results).T
